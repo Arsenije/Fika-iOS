@@ -16,7 +16,7 @@ struct VoiceButton: View {
             Image(systemName: busy ? "waveform" : (recorder.isRecording ? "stop.circle.fill" : "mic.circle"))
                 .font(.title2)
                 .symbolEffect(.pulse, isActive: recorder.isRecording || busy)
-                .foregroundStyle(recorder.isRecording ? .red : .tint)
+                .foregroundStyle(recorder.isRecording ? Color.red : Color.accentColor)
         }
         .disabled(busy)
         .alert("Voice", isPresented: .constant(error != nil), actions: {
