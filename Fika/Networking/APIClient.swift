@@ -96,8 +96,9 @@ struct APIClient {
         return try await postJSON("/people", body: Body(name: name, relationship: relationship, profile: profile, tags: tags), as: CreatedID.self)
     }
 
-    func intakeQuestions(name: String, relationship: String) async throws -> [String] {
-        try await getJSON("/intake", query: ["name": name, "relationship": relationship], as: Questions.self).questions
+    func intakeQuestions(name: String, relationship: String) async throws -> [IntakeQuestion] {
+        struct Wrap: Codable { let questions: [IntakeQuestion] }
+        return try await getJSON("/intake", query: ["name": name, "relationship": relationship], as: Wrap.self).questions
     }
 
     func enrichQuestions(personID: String) async throws -> [String] {

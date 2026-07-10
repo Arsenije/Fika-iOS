@@ -149,6 +149,16 @@ struct Questions: Codable {
     var questions: [String] = []
 }
 
+/// A tailored add-person question from /intake (objects, unlike /enrich strings).
+struct IntakeQuestion: Codable, Identifiable {
+    var id: String { key }
+    let key: String
+    let q: String
+    var sub: String = ""
+    var ph: String = ""
+    var label: String = ""
+}
+
 // Small write-response shapes.
 struct CreatedID: Codable {
     let id: String

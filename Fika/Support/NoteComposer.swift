@@ -8,6 +8,7 @@ struct NoteComposer: View {
 
     var prompt: String = ""
     var people: [String] = []
+    var heading: String = "New moment"
     var onSaved: () -> Void = {}
 
     @State private var text = ""
@@ -29,7 +30,7 @@ struct NoteComposer: View {
                     Text(people.isEmpty ? "What happened?" : "About \(people.joined(separator: ", "))")
                 }
             }
-            .navigationTitle("New moment")
+            .navigationTitle(heading)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

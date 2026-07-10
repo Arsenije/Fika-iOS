@@ -79,6 +79,7 @@ struct SearchView: View {
 }
 
 private struct TurnView: View {
+    @Environment(AppState.self) private var app
     let turn: Turn
     @Binding var addPrompt: PromptSeed?
 
@@ -92,9 +93,15 @@ private struct TurnView: View {
                 AnswerCard(answer: answer)
             }
             if let card = turn.response.question_card {
-                QuestionCardView(card: card) {
-                    addPrompt = PromptSeed(prompt: card.question, people: card.people)
-                }
+                QuestionCardView(
+                    card: card,
+                    onTeach: { addPrompt = PromptSeed(prompt: card.question, people: card.people) },
+                    onRemind: {
+                        let who = card.people.first ?? ""
+                        let text = who.isEmpty ? card.question : "Ask \(who): \(card.question)"
+                        Task { try? await app.api.createReminder(text: text, personName: who) }
+                    }
+                )
             }
             if let reminder = turn.response.reminder {
                 Label(reminder.text, systemImage: "bell.fill")
@@ -145,13 +152,25 @@ private struct AnswerCard: View {
 private struct QuestionCardView: View {
     let card: QuestionCard
     let onTeach: () -> Void
+    let onRemind: () -> Void
+    @State private var reminded = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(card.title.isEmpty ? "Teach Fika this" : card.title, systemImage: "lightbulb")
-                .font(.headline)
-            if !card.hint.isEmpty { Text(card.hint).font(.callout).foregroundStyle(.secondary) }
-            Button("Add what you know", action: onTeach)
-                .buttonStyle(.borderedProminent)
+            Text("NEED MORE").font(.caption2.weight(.bold)).foregroundStyle(.orange).tracking(1)
+            Text(card.title.isEmpty ? "Teach Fika this" : card.title).font(.headline)
+            if !card.question.isEmpty {
+                Text("“\(card.question)”").font(.callout).italic().foregroundStyle(.secondary)
+            }
+            if !card.hint.isEmpty { Text(card.hint).font(.caption).foregroundStyle(.secondary) }
+            HStack {
+                Button("Add what you know", action: onTeach).buttonStyle(.borderedProminent)
+                Button(reminded ? "Reminder set ✓" : "Remind me to ask") {
+                    onRemind(); reminded = true
+                }
+                .buttonStyle(.bordered)
+                .disabled(reminded)
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

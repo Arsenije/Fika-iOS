@@ -6,34 +6,29 @@ struct PersonDetailView: View {
     let personID: String
 
     @State private var detail: PersonDetail?
+    @State private var curio: [DeckItem] = []
     @State private var loading = false
     @State private var error: String?
     @State private var photo: PhotosPickerItem?
     @State private var showAddMoment = false
-    @State private var enrichQuestions: [String] = []
-    @State private var activePrompt: String?
+    @State private var showReminder = false
+    @State private var reminderText = ""
 
     var body: some View {
         List {
-            if let detail {
-                header(detail)
-                if !detail.profile.isEmpty {
-                    Section("Profile") { Text(detail.profile) }
-                }
-                interestsSection(detail)
-                relatedSection(detail)
-                remindersSection(detail)
-                enrichSection(detail)
-                timelineSection(detail)
+            if let d = detail {
+                header(d)
+                if !d.profile.isEmpty { Section("Profile") { Text(d.profile) } }
+                remindersSection(d)
+                curiousSection(d)
+                actionsSection(d)
+                timelineSection(d)
+                interestsSection(d)
+                relatedSection(d)
             }
         }
         .navigationTitle(detail?.name ?? "Person")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button { showAddMoment = true } label: { Image(systemName: "square.and.pencil") }
-            }
-        }
         .task { await load() }
         .refreshable { await load() }
         .overlay { if loading && detail == nil { ProgressView() } }
@@ -41,10 +36,10 @@ struct PersonDetailView: View {
         .sheet(isPresented: $showAddMoment, onDismiss: { Task { await load() } }) {
             NoteComposer(people: detail.map { [$0.name] } ?? [])
         }
-        .sheet(item: Binding(get: { activePrompt.map(PromptWrapper.init) },
-                             set: { activePrompt = $0?.text })) { wrapped in
-            NoteComposer(prompt: wrapped.text, people: detail.map { [$0.name] } ?? [],
-                         onSaved: { Task { await load() } })
+        .alert("Remind me…", isPresented: $showReminder) {
+            TextField("e.g. ask about her studio", text: $reminderText)
+            Button("Cancel", role: .cancel) { reminderText = "" }
+            Button("Add") { Task { await addReminder() } }
         }
         .alert("Error", isPresented: .constant(error != nil)) {
             Button("OK") { error = nil }
@@ -61,7 +56,7 @@ struct PersonDetailView: View {
                     if !d.relationship.isEmpty {
                         Text(d.relationship).font(.subheadline).foregroundStyle(.secondary)
                     }
-                    Text("Last seen \(RelativeTime.phrase(days: d.days_since))")
+                    Text("Last moment \(RelativeTime.phrase(days: d.days_since))")
                         .font(.caption).foregroundStyle(.secondary)
                     PhotosPicker(selection: $photo, matching: .images) {
                         Text(d.has_avatar ? "Change photo" : "Add photo").font(.caption)
@@ -69,6 +64,27 @@ struct PersonDetailView: View {
                 }
                 Spacer()
             }
+            if !d.tags.isEmpty { Chips(items: d.tags) }
+        }
+    }
+
+    @ViewBuilder private func curiousSection(_ d: PersonDetail) -> some View {
+        Section("Fika's curious") {
+            if curio.isEmpty {
+                Text("Thinking of what to ask…").font(.callout).foregroundStyle(.secondary)
+            } else {
+                CardPile(items: $curio, emptyText: "Nothing else comes to mind yet.") { item, text in
+                    await saveMoment(text: text, prompt: item.question)
+                }
+                .listRowInsets(EdgeInsets())
+            }
+        }
+    }
+
+    @ViewBuilder private func actionsSection(_ d: PersonDetail) -> some View {
+        Section {
+            Button { showAddMoment = true } label: { Label("Log a moment", systemImage: "square.and.pencil") }
+            Button { showReminder = true } label: { Label("Remind me…", systemImage: "bell") }
         }
     }
 
@@ -85,13 +101,13 @@ struct PersonDetailView: View {
 
     @ViewBuilder private func relatedSection(_ d: PersonDetail) -> some View {
         if !d.related_people.isEmpty {
-            Section("Might connect with") {
+            Section("Connected people") {
                 ForEach(d.related_people) { rp in
                     NavigationLink(value: rp.id) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(rp.name)
                             if !rp.shared.isEmpty {
-                                Text("both: \(rp.shared.joined(separator: ", "))")
+                                Text("shares \(rp.shared.joined(separator: ", "))")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         }
@@ -108,23 +124,8 @@ struct PersonDetailView: View {
                     HStack {
                         Text(r.text)
                         Spacer()
-                        Button { Task { await complete(r) } } label: {
-                            Image(systemName: "checkmark.circle")
-                        }.buttonStyle(.borderless)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private func enrichSection(_ d: PersonDetail) -> some View {
-        Section("Tell Fika more") {
-            if enrichQuestions.isEmpty {
-                Button("Suggest questions") { Task { await loadEnrich() } }
-            } else {
-                ForEach(enrichQuestions, id: \.self) { q in
-                    Button { activePrompt = q } label: {
-                        HStack { Text(q); Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary) }
+                        Button { Task { await complete(r) } } label: { Image(systemName: "checkmark.circle") }
+                            .buttonStyle(.borderless)
                     }
                 }
             }
@@ -151,12 +152,25 @@ struct PersonDetailView: View {
 
     private func load() async {
         loading = true; defer { loading = false }
-        do { detail = try await app.api.person(personID) }
-        catch { self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription }
+        do {
+            detail = try await app.api.person(personID)
+            if curio.isEmpty, let qs = try? await app.api.enrichQuestions(personID: personID) {
+                curio = qs.map { DeckItem(question: $0, personName: detail?.name ?? "", personID: personID) }
+            }
+        } catch { self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription }
     }
-    private func loadEnrich() async {
-        do { enrichQuestions = try await app.api.enrichQuestions(personID: personID) }
-        catch { self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription }
+    private func saveMoment(text: String, prompt: String) async {
+        do {
+            _ = try await app.api.createNote(text: text, people: detail.map { [$0.name] } ?? [], prompt: prompt)
+            await load()
+        } catch { self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription }
+    }
+    private func addReminder() async {
+        let text = reminderText.trimmingCharacters(in: .whitespaces)
+        reminderText = ""
+        guard !text.isEmpty, let d = detail else { return }
+        _ = try? await app.api.createReminder(text: text, personID: d.id, personName: d.name)
+        await load()
     }
     private func complete(_ r: Reminder) async {
         try? await app.api.completeReminder(r.id)
@@ -164,15 +178,7 @@ struct PersonDetailView: View {
     }
     private func upload(_ item: PhotosPickerItem?) async {
         guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return }
-        do {
-            try await app.api.uploadAvatar(personID: personID, imageData: data)
-            await load()
-        } catch { self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription }
+        do { try await app.api.uploadAvatar(personID: personID, imageData: data); await load() }
+        catch { self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription }
     }
-}
-
-/// Identifiable wrapper so a String prompt can drive a `.sheet(item:)`.
-private struct PromptWrapper: Identifiable {
-    let text: String
-    var id: String { text }
 }
